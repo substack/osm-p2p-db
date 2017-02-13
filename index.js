@@ -55,12 +55,13 @@ function DB (opts) {
     map: function (row, cb) {
       if (!row.value) return
       var k = row.value.k, v = row.value.v || {}
+      var d = row.value.d
       var ops = []
       var next = after(function () {
         cb(null, ops)
       })
 
-      // Update refs
+      // Delete the old refs for this osm document ID
       var refs = v.refs || row.value.refs || []
       var members = v.members || row.value.members || []
       row.links.forEach(function (link) {
@@ -70,6 +71,7 @@ function DB (opts) {
             for (var i = 0; i < node.value.v.refs.length; i++) {
               var ref = node.value.v.refs[i]
               ops.push({ type: 'del', key: ref, rowKey: link })
+              if (d) ops.push({ type: 'put', key: ref, value: d })
             }
           }
           if (node.value.v.members) {
@@ -78,11 +80,14 @@ function DB (opts) {
               if (typeof member === 'string') member = { ref: member }
               if (typeof member.ref !== 'string') return
               ops.push({ type: 'del', key: member.ref, rowKey: link })
+              if (d) ops.push({ type: 'put', key: member.ref, value: d })
             }
           }
           done()
         })
       })
+
+      // Write the new ref entries for this new osm document
       if (k) {
         for (var i = 0; i < refs.length; i++) {
           ops.push({ type: 'put', key: refs[i], value: k })
@@ -111,7 +116,7 @@ DB.prototype._links = function (link, cb) {
   var self = this
   self.log.get(link, function (err, doc) {
     if (err) return cb(err)
-    self.refs.list(doc.value.k, function (err, rows) {
+    self.refs.list(doc.value.k || doc.value.d, function (err, rows) {
       if (err) cb(err)
       else cb(null, rows.map(keyf))
     })
@@ -327,8 +332,17 @@ DB.prototype._onpt = function (pt, seen, cb) {
             })
             if (--pending === 0) cb(null, res)
           })
+        } else if (doc && doc.value && doc.value.d) {
+          doc.value.v = {
+            id: doc.value.d,
+            version: link,
+            deleted: true
+          }
         }
-        addDoc(doc.value.k, link, doc.value.v)
+        // TODO: open up this if() statement to expose deletions
+        if (doc.value.k) {
+          addDoc(doc.value.k || doc.value.d, link, doc.value.v)
+        }
         if (--pending === 0) cb(null, res)
       })
       pending++
