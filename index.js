@@ -43,7 +43,8 @@ function DB (opts) {
       if (v && v.lat !== undefined && v.lon !== undefined) {
         next(null, { type: 'put', point: ptf(v) })
       } else if (d && Array.isArray(row.value.points)) {
-        next(null, { type: 'del', points: row.value.points.map(ptf) })
+        var pts = row.value.points.map(ptf)
+        next(null, { type: 'put', points: pts })
       } else next()
       function ptf (x) { return [ x.lat, x.lon ] }
     }
@@ -111,7 +112,7 @@ DB.prototype._links = function (link, cb) {
   var self = this
   self.log.get(link, function (err, doc) {
     if (err) return cb(err)
-    self.refs.list(doc.value.k, function (err, rows) {
+    self.refs.list(doc.value.k || doc.value.d, function (err, rows) {
       if (err) cb(err)
       else cb(null, rows.map(keyf))
     })
@@ -308,6 +309,12 @@ DB.prototype._onpt = function (pt, seen, cb) {
   self.log.get(link, function (err, doc) {
     if (doc && doc.value && doc.value.k && doc.value.v) {
       addDoc(doc.value.k, link, doc.value.v)
+    } else if (doc && doc.value && doc.value.d && doc.value.points) {
+      for (var i = 0; i < doc.value.points.length; i++) {
+        var pt = doc.value.points[i]
+        pt.deleted = true
+        addDoc(doc.value.d, link, pt)
+      }
     }
     if (--pending === 0) cb(null, res)
   })
@@ -340,6 +347,9 @@ DB.prototype._onpt = function (pt, seen, cb) {
   })
 
   function addDoc (id, key, doc) {
+    // For now, filter out deleted documents.
+    if (doc.deleted) return
+
     if (!added.hasOwnProperty(key)) {
       res.push(xtend(doc, {
         id: id,
