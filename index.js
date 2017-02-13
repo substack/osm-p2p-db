@@ -198,6 +198,9 @@ DB.prototype._del = function (key, opts, cb) {
         fields.refs.push.apply(fields.refs, v.refs)
       }
     })
+    if (opts.value && opts.value.changeset) {
+      fields.v = {changeset: opts.value.changeset}
+    }
     cb(null, [ { type: 'del', key: key, links: links, fields: fields } ])
   })
 }
