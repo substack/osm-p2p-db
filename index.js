@@ -55,10 +55,12 @@ DB.prototype._restartIndexes = function () {
     map: function (row, next) {
       if (!row.value) return null
       var v = row.value.v
-      var d = row.value.d
-      if (v && v.lat !== undefined && v.lon !== undefined) {
+
+      // Index the new point
+      if (row.value.k && v.lat !== undefined && v.lon !== undefined) {
         next(null, { type: 'put', point: ptf(v) })
-      } else if (d && Array.isArray(row.value.points)) {
+      // Index a deleted point or way
+      } else if (row.value.d && Array.isArray(row.value.points)) {
         var pts = row.value.points.map(ptf)
         next(null, { type: 'put', points: pts })
       } else next()
@@ -201,9 +203,12 @@ DB.prototype.del = function (key, opts, cb) {
     {
       type: 'del',
       key: key,
-      links: opts.links
+      links: opts.links,
+      fields: opts.value ? { value: opts.value } : null
     }
   ]
+  opts.value = undefined
+  opts.links = undefined
 
   self.batch(rows, opts, function (err, nodes) {
     if (err) cb(err)
@@ -211,25 +216,24 @@ DB.prototype.del = function (key, opts, cb) {
   })
 }
 
-// OsmId, Opts -> [OsmBatchOp]
-DB.prototype._getDocumentDeletionBatchOps = function (id, opts, cb) {
+// OsmId, Opts -> OsmBatchOp
+DB.prototype._getDocumentDeletionBatchOp = function (id, opts, cb) {
   var self = this
 
   if (!opts || !opts.links) {
     // Fetch all versions of the document ID
-    self.kv.get(id, function (err, docs) {
+    self.kv.get(id, { fields: true }, function (err, docs) {
       if (err) return cb(err)
 
       docs = mapObj(docs, function (version, doc) {
-        if (doc.deleted) {
-          return {
-            id: id,
-            version: version,
-            deleted: true
-          }
-        } else {
-          return doc.value
+        doc.v = xtend(doc.v, {
+          id: id,
+          version: version
+        })
+        if (doc.d) {
+          doc.v.deleted = true
         }
+        return doc.v
       })
 
       handleLinks(docs)
@@ -279,7 +283,15 @@ DB.prototype._getDocumentDeletionBatchOps = function (id, opts, cb) {
         fields.members.push.apply(fields.members, v.members)
       }
     })
-    cb(null, [ { type: 'del', key: id, links: links, fields: fields } ])
+
+    var res = { type: 'del', key: id, links: links, fields: fields }
+
+    // Use opts.value to set a value on hyperkv deletions.
+    if (opts.value) {
+      res.fields = xtend(res.fields, { v: opts.value })
+    }
+
+    cb(null, res)
   }
 }
 
@@ -317,10 +329,10 @@ DB.prototype.batch = function (rows, opts, cb) {
         batch.push(row)
         if (--pending <= 0) done()
       } else if (row.type === 'del') {
-        var xrow = xtend(opts, row)
-        self._getDocumentDeletionBatchOps(key, xrow, function (err, xrows) {
+        opts = row.fields ? { value: row.fields.value } : {}
+        self._getDocumentDeletionBatchOp(key, opts, function (err, xrow) {
           if (err) return release(cb, err)
-          batch.push.apply(batch, xrows)
+          batch.push(xrow)
           if (--pending <= 0) done()
         })
       } else {
@@ -332,23 +344,15 @@ DB.prototype.batch = function (rows, opts, cb) {
   })
 }
 
-DB.prototype.get = function (key, opts, cb) {
+DB.prototype.get = function (id, opts, cb) {
   if (typeof opts === 'function') {
     cb = opts
     opts = {}
   }
-  this.kv.get(key, function (err, docs) {
+  this.kv.get(id, { fields: true }, function (err, docs) {
     if (err) return cb(err)
     docs = mapObj(docs, function (version, doc) {
-      if (doc.deleted) {
-        return {
-          id: key,
-          version: version,
-          deleted: true
-        }
-      } else {
-        return doc.value
-      }
+      return kvDocToOsmDoc(version, id, doc)
     })
 
     cb(null, docs)
@@ -497,10 +501,10 @@ DB.prototype._collectNodeAndReferers = function (version, seenAccum, cb) {
   }
 
   function addDocFromNode (node) {
-    if (node && node.value && node.value.k && node.value.v) {
-      addDoc(node.value.k, node.key, node.value.v)
-    } else if (node && node.value && node.value.d) {
-      addDoc(node.value.d, node.key, {deleted: true})
+    if (node && node.value && (node.value.k || node.value.d)) {
+      var id = node.value.k || node.value.d
+      var doc = kvDocToOsmDoc(node.key, id, node.value)
+      addDoc(id, node.key, doc)
     }
   }
 
@@ -663,4 +667,19 @@ function kdbPointToVersion (pt) {
 // {lat: Number, lon: Number} -> [Number, Number]
 function ptf (x) {
   return [ Number(x.lat), Number(x.lon) ]
+}
+
+// Populates an OsmDoc with its version, id, and whether it's a deletion
+// tombstone.
+// OsmVersion, OsmId, OsmDoc -> OsmDoc
+function kvDocToOsmDoc (version, id, doc) {
+  var res = {}
+  res = xtend(doc.v, {
+    id: id,
+    version: version
+  })
+  if (doc.d) {
+    res.deleted = true
+  }
+  return res
 }

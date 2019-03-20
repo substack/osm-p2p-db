@@ -122,6 +122,81 @@ test('del', function (t) {
   }
 })
 
+test('del with value', function (t) {
+  t.plan(5)
+
+  var osm = makeOsm()
+
+  var doc = { type: 'node', lat: 14, lon: -14, changeset: 'foobar' }
+
+  osm.create(doc, function (err, id) {
+    t.ifError(err)
+    var v = {
+      lat: doc.lat,
+      lon: doc.lon,
+      changeset: doc.changeset
+    }
+    osm.del(id, { value: v }, function (err, node) {
+      t.ifError(err)
+      doGet(id, node.key)
+    })
+  })
+
+  function doGet (id, version) {
+    osm.get(id, function (err, heads) {
+      t.ifError(err)
+      t.equals(Object.keys(heads).length, 1)
+      var actual = heads[Object.keys(heads)[0]]
+      var expected = {
+        changeset: 'foobar',
+        id: id,
+        lat: 14,
+        lon: -14,
+        version: version,
+        deleted: true
+      }
+      t.deepEqual(actual, expected, 'correct query /w value')
+    })
+  }
+})
+
+test('query deleted node with value', function (t) {
+  t.plan(4)
+
+  var osm = makeOsm()
+
+  var doc = { type: 'node', lat: 14, lon: -14, changeset: 'foobar' }
+
+  osm.create(doc, function (err, id2) {
+    t.ifError(err)
+    var v = {
+      lat: doc.lat,
+      lon: doc.lon,
+      changeset: doc.changeset
+    }
+    osm.del(id2, { value: v }, function (err, node) {
+      t.ifError(err)
+      doQuery(id2, node.key)
+    })
+  })
+
+  function doQuery (id, version) {
+    var q = [[-90,90],[-180,180]]
+    var expected = {
+      changeset: 'foobar',
+      id: id,
+      lat: 14,
+      lon: -14,
+      version: version,
+      deleted: true
+    }
+    osm.query(q, function (err, res) {
+      t.ifError(err)
+      t.deepEqual(res, [expected], 'full coverage query')
+    })
+  }
+})
+
 function idcmp (a, b) {
   return a.id < b.id ? -1 : 1
 }

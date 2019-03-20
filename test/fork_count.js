@@ -74,8 +74,8 @@ test('count forks', function (t) {
     osm0.get(names.C, function (err, values) {
       t.ifError(err)
       var expected = {}
-      expected[versions.C[1]] = { type: 'node', lat: 62.5, lon: -146.2 }
-      expected[versions.C[2]] = { type: 'node', lat: 62.4, lon: -146.3 }
+      expected[versions.C[1]] = { type: 'node', lat: 62.5, lon: -146.2, version: versions.C[1], id: names.C }
+      expected[versions.C[2]] = { type: 'node', lat: 62.4, lon: -146.3, version: versions.C[2], id: names.C }
       t.deepEqual(values, expected, 'expected fork values')
     })
   }
